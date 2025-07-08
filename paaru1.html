@@ -1,0 +1,956 @@
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clinical AI Image Generation Platform</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            medical: {
+              50: '#f0f9ff',
+              100: '#e0f2fe',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+  />
+  <script defer src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script defer src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script defer src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-gradient-to-br from-medical-50 to-blue-50 min-h-screen flex flex-col">
+  <header class="bg-white shadow-lg border-b-2 border-medical-500">
+    <div class="container mx-auto px-4 py-6">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+          <i class="fas fa-microscope text-medical-600 text-3xl"></i>
+          <div>
+            <h1 class="text-3xl font-bold text-gray-900">
+              Clinical AI Image Generation Platform
+            </h1>
+            <p class="text-gray-600 mt-1">
+              Advanced AI-powered medical imaging for clinical diagnostics
+            </p>
+          </div>
+        </div>
+        <div id="system-status" class="hidden md:block"></div>
+      </div>
+    </div>
+  </header>
+  <main id="root" class="flex-grow container mx-auto p-4 max-w-7xl"></main>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Simple function to create image display request
+    // Immediately returns completed status with image from images folder
+    function mockCreateRequest({ organ, imageType, diagnosis, bodyRegion }) {
+      return new Promise((resolve) => {
+        const requestId = 'req_' + Math.random().toString(36).substring(2, 10);
+        const timestamp = new Date().toISOString();
+        const altText = `Medical ${imageType} image of ${organ} showing ${diagnosis} in ${bodyRegion}`;
+
+        resolve({
+          requestId,
+          timestamp,
+          status: 'completed',
+          imageUrl: './images/no.webp',
+          altText: altText,
+          progress: 100
+        });
+      });
+    }
+
+    // No status polling needed - images are displayed immediately
+
+    function getRandomError() {
+      const errorTypes = [
+        {
+          type: 'RESOURCE_ERROR',
+          message: 'Insufficient GPU resources available for image generation.',
+          details: 'The AI processing servers are currently at capacity. This typically resolves within 5-10 minutes.',
+          suggestion: 'Try again in a few minutes or during off-peak hours.',
+          severity: 'medium',
+          retryable: true,
+          estimatedRetryTime: '5-10 minutes'
+        },
+        {
+          type: 'TIMEOUT_ERROR',
+          message: 'Request timeout: AI model processing exceeded time limit.',
+          details: 'The image generation process took longer than the maximum allowed time (60 seconds).',
+          suggestion: 'Try simplifying your request parameters or retry with the same settings.',
+          severity: 'medium',
+          retryable: true,
+          estimatedRetryTime: 'Immediate'
+        },
+        {
+          type: 'PARAMETER_ERROR',
+          message: 'Invalid parameters: Unable to generate image with specified criteria.',
+          details: 'The combination of organ type, image modality, and diagnosis may not be compatible.',
+          suggestion: 'Review your input parameters and ensure they are medically compatible.',
+          severity: 'high',
+          retryable: true,
+          estimatedRetryTime: 'After parameter review'
+        },
+        {
+          type: 'SERVER_ERROR',
+          message: 'Server overload: Processing servers are temporarily unavailable.',
+          details: 'High demand is causing temporary service interruptions. Our team is working to resolve this.',
+          suggestion: 'Please wait and try again in a few minutes. Consider submitting during off-peak hours.',
+          severity: 'low',
+          retryable: true,
+          estimatedRetryTime: '2-5 minutes'
+        },
+        {
+          type: 'MODEL_ERROR',
+          message: 'AI model error: Unexpected issue during image generation.',
+          details: 'The AI model encountered an internal error while processing your request.',
+          suggestion: 'This is usually temporary. Try again with the same or modified parameters.',
+          severity: 'medium',
+          retryable: true,
+          estimatedRetryTime: 'Immediate'
+        },
+        {
+          type: 'VALIDATION_ERROR',
+          message: 'Medical validation failed: Request does not meet clinical standards.',
+          details: 'The requested combination may not represent a valid clinical scenario.',
+          suggestion: 'Please review the medical accuracy of your request parameters.',
+          severity: 'high',
+          retryable: true,
+          estimatedRetryTime: 'After parameter correction'
+        },
+        {
+          type: 'NETWORK_ERROR',
+          message: 'Network connectivity issue: Unable to reach processing servers.',
+          details: 'There appears to be a network connectivity problem affecting the service.',
+          suggestion: 'Check your internet connection and try again.',
+          severity: 'medium',
+          retryable: true,
+          estimatedRetryTime: 'When connection is restored'
+        }
+      ];
+
+      return errorTypes[Math.floor(Math.random() * errorTypes.length)];
+    }
+
+    // Validation helpers
+    function validateNotEmpty(value) {
+      return value.trim().length > 0;
+    }
+
+    function InputField({ label, id, value, onChange, placeholder, error, required = false, suggestions = [] }) {
+      const [showSuggestions, setShowSuggestions] = useState(false);
+      const [filteredSuggestions, setFilteredSuggestions] = useState([]);
+
+      useEffect(() => {
+        if (suggestions.length > 0 && value) {
+          const filtered = suggestions.filter(s =>
+            s.toLowerCase().includes(value.toLowerCase())
+          );
+          setFilteredSuggestions(filtered);
+        } else {
+          setFilteredSuggestions([]);
+        }
+      }, [value, suggestions]);
+
+      return (
+        <div className="mb-4 relative">
+          <label htmlFor={id} className="block text-gray-700 font-semibold mb-2">
+            {label} {required && <span className="text-red-600">*</span>}
+          </label>
+          <input
+            id={id}
+            type="text"
+            value={value}
+            onChange={onChange}
+            onFocus={() => setShowSuggestions(true)}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+            placeholder={placeholder}
+            className={`w-full rounded-lg border-2 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-medical-500 transition-all duration-200 ${
+              error ? 'border-red-500 bg-red-50' : 'border-gray-300 hover:border-gray-400'
+            }`}
+            aria-invalid={error ? 'true' : 'false'}
+            aria-describedby={error ? `${id}-error` : undefined}
+            autoComplete="off"
+          />
+ 
+          {showSuggestions && filteredSuggestions.length > 0 && (
+            <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+              {filteredSuggestions.map((suggestion, index) => (
+                <div
+                  key={index}
+                  className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                  onClick={() => {
+                    onChange({ target: { value: suggestion } });
+                    setShowSuggestions(false);
+                  }}
+                >
+                  {suggestion}
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {error && (
+            <p id={`${id}-error`} className="text-red-600 text-sm mt-2 flex items-center">
+              <i className="fas fa-exclamation-circle mr-1"></i>
+              {error}
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    function StatusBadge({ status, progress }) {
+      let colorClass = 'bg-gray-300 text-gray-800';
+      let icon = 'fas fa-hourglass-start';
+      let label = 'Unknown';
+
+      switch (status) {
+        case 'pending':
+          colorClass = 'bg-yellow-100 text-yellow-800 border border-yellow-300';
+          icon = 'fas fa-clock';
+          label = 'Pending';
+          break;
+        case 'processing':
+          colorClass = 'bg-blue-100 text-blue-800 border border-blue-300';
+          icon = 'fas fa-cog fa-spin';
+          label = `Processing ${progress ? `(${Math.round(progress)}%)` : ''}`;
+          break;
+        case 'completed':
+          colorClass = 'bg-green-100 text-green-800 border border-green-300';
+          icon = 'fas fa-check-circle';
+          label = 'Completed';
+          break;
+        case 'error':
+          colorClass = 'bg-red-100 text-red-800 border border-red-300';
+          icon = 'fas fa-exclamation-triangle';
+          label = 'Error';
+          break;
+        default:
+          break;
+      }
+
+      return (
+        <span
+          className={`inline-flex items-center px-4 py-2 rounded-full text-sm font-semibold ${colorClass} shadow-sm`}
+          aria-live="polite"
+        >
+          <i className={`${icon} mr-2`} aria-hidden="true"></i>
+          {label}
+        </span>
+      );
+    }
+
+    function ProgressBar({ progress, status }) {
+      if (status !== 'processing' && status !== 'completed') return null;
+
+      const percentage = Math.min(100, Math.max(0, progress || 0));
+
+      return (
+        <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+          <div
+            className={`h-2 rounded-full transition-all duration-500 ${
+              status === 'completed' ? 'bg-green-500' : 'bg-blue-500'
+            }`}
+            style={{ width: `${percentage}%` }}
+          ></div>
+        </div>
+      );
+    }
+
+
+
+    function ErrorFeedback({ errorInfo, onRetry, onDismiss, requestId }) {
+      if (!errorInfo) return null;
+
+      const getSeverityColor = (severity) => {
+        switch (severity) {
+          case 'high': return 'border-red-500 bg-red-50';
+          case 'medium': return 'border-orange-500 bg-orange-50';
+          case 'low': return 'border-yellow-500 bg-yellow-50';
+          default: return 'border-red-500 bg-red-50';
+        }
+      };
+
+      const getSeverityIcon = (severity) => {
+        switch (severity) {
+          case 'high': return 'fas fa-exclamation-triangle text-red-600';
+          case 'medium': return 'fas fa-exclamation-circle text-orange-600';
+          case 'low': return 'fas fa-info-circle text-yellow-600';
+          default: return 'fas fa-exclamation-triangle text-red-600';
+        }
+      };
+
+      return (
+        <div className={`border-l-4 rounded-lg p-6 ${getSeverityColor(errorInfo.severity)}`}>
+          <div className="flex items-start space-x-4">
+            <i className={`${getSeverityIcon(errorInfo.severity)} text-xl mt-1`}></i>
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-bold text-gray-900 text-lg">
+                  {errorInfo.type.replace('_', ' ').toLowerCase().replace(/\b\w/g, l => l.toUpperCase())}
+                </h4>
+                <span className={`px-2 py-1 rounded text-xs font-medium ${
+                  errorInfo.severity === 'high' ? 'bg-red-200 text-red-800' :
+                  errorInfo.severity === 'medium' ? 'bg-orange-200 text-orange-800' :
+                  'bg-yellow-200 text-yellow-800'
+                }`}>
+                  {errorInfo.severity.toUpperCase()} PRIORITY
+                </span>
+              </div>
+
+              <p className="text-gray-800 font-medium mb-3">{errorInfo.message}</p>
+
+              <div className="bg-white rounded-lg p-4 mb-4 border border-gray-200">
+                <h5 className="font-semibold text-gray-900 mb-2 flex items-center">
+                  <i className="fas fa-info-circle text-blue-500 mr-2"></i>
+                  Details
+                </h5>
+                <p className="text-gray-700 text-sm">{errorInfo.details}</p>
+              </div>
+
+              <div className="bg-white rounded-lg p-4 mb-4 border border-gray-200">
+                <h5 className="font-semibold text-gray-900 mb-2 flex items-center">
+                  <i className="fas fa-lightbulb text-yellow-500 mr-2"></i>
+                  Suggested Action
+                </h5>
+                <p className="text-gray-700 text-sm">{errorInfo.suggestion}</p>
+                {errorInfo.estimatedRetryTime && (
+                  <p className="text-gray-600 text-xs mt-2">
+                    <i className="fas fa-clock mr-1"></i>
+                    Estimated retry time: {errorInfo.estimatedRetryTime}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                {errorInfo.retryable && (
+                  <button
+                    onClick={() => onRetry(requestId)}
+                    className="inline-flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <i className="fas fa-redo-alt mr-2"></i>
+                    Retry Request
+                  </button>
+                )}
+                <button
+                  onClick={() => onDismiss(requestId)}
+                  className="inline-flex items-center px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500"
+                >
+                  <i className="fas fa-times mr-2"></i>
+                  Dismiss
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`Error: ${errorInfo.message}\nDetails: ${errorInfo.details}\nSuggestion: ${errorInfo.suggestion}`);
+                    showNotification('Error details copied to clipboard', 'success');
+                  }}
+                  className="inline-flex items-center px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded-lg font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-400"
+                >
+                  <i className="fas fa-copy mr-2"></i>
+                  Copy Details
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function RequestCard({ request, onRetry, onDelete }) {
+      const formatTime = (timestamp) => {
+        if (!timestamp) return '';
+        return new Date(timestamp).toLocaleTimeString();
+      };
+
+      const getProcessingTime = () => {
+        if (!request.createdAt) return '';
+        const start = new Date(request.createdAt);
+        const end = request.completedAt ? new Date(request.completedAt) : new Date();
+        const diffMs = end - start;
+        const diffSec = Math.floor(diffMs / 1000);
+        return diffSec > 0 ? `${diffSec}s` : '0s';
+      };
+
+      return (
+        <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border border-gray-200 hover:shadow-xl transition-shadow duration-300">
+          <div className="flex flex-col lg:flex-row lg:justify-between lg:items-start mb-4">
+            <div className="flex-1 mb-3 lg:mb-0">
+              <div className="flex items-center space-x-2 mb-2">
+                <i className="fas fa-microscope text-medical-600"></i>
+                <h3 className="text-xl font-bold text-gray-900">
+                  {request.params.organ} - {request.params.imageType}
+                </h3>
+              </div>
+              <div className="text-sm text-gray-500 mb-3">
+                <span>Created: {formatTime(request.createdAt)}</span>
+                {request.completedAt && (
+                  <span className="ml-4">Completed: {formatTime(request.completedAt)}</span>
+                )}
+                <span className="ml-4">Duration: {getProcessingTime()}</span>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <StatusBadge status={request.status} progress={request.progress} />
+              <button
+                onClick={() => onDelete(request.id)}
+                className="text-gray-400 hover:text-red-500 transition-colors"
+                aria-label="Delete request"
+              >
+                <i className="fas fa-trash-alt"></i>
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="bg-gray-50 rounded-lg p-3">
+              <span className="font-semibold text-gray-700">Diagnosis:</span>
+              <p className="text-gray-900 mt-1">{request.params.diagnosis}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-3">
+              <span className="font-semibold text-gray-700">Body Region:</span>
+              <p className="text-gray-900 mt-1">{request.params.bodyRegion}</p>
+            </div>
+          </div>
+
+          <ProgressBar progress={request.progress} status={request.status} />
+
+          {request.status === 'completed' && request.imageUrl && (
+            <div className="mt-6">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-semibold text-gray-900">Medical Image</h4>
+                <button
+                  onClick={() => window.open(request.imageUrl, '_blank')}
+                  className="text-medical-600 hover:text-medical-700 text-sm"
+                >
+                  <i className="fas fa-external-link-alt mr-1"></i>
+                  View Full Size
+                </button>
+              </div>
+              <div className="relative group">
+                <img
+                  src={request.imageUrl}
+                  alt={request.altText}
+                  className="w-full rounded-lg border border-gray-300 shadow-md hover:shadow-lg transition-shadow duration-300"
+                  loading="lazy"
+                />
+                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-10 transition-all duration-300 rounded-lg"></div>
+              </div>
+            </div>
+          )}
+
+          {request.status === 'error' && (
+            <div className="mt-6">
+              <ErrorFeedback
+                errorInfo={request.errorInfo}
+                onRetry={onRetry}
+                onDismiss={onDelete}
+                requestId={request.id}
+              />
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function App() {
+      const [organ, setOrgan] = useState('');
+      const [imageType, setImageType] = useState('');
+      const [diagnosis, setDiagnosis] = useState('');
+      const [bodyRegion, setBodyRegion] = useState('');
+
+      const [errors, setErrors] = useState({});
+      const [requests, setRequests] = useState([]);
+      const [submitting, setSubmitting] = useState(false);
+      const [filter, setFilter] = useState('all'); // all, pending, processing, completed, error
+
+      const pollingInterval = useRef(null);
+
+      // Medical suggestions for better UX
+      const organSuggestions = ['Heart', 'Liver', 'Brain', 'Lungs', 'Kidney', 'Pancreas', 'Stomach', 'Intestine'];
+      const imageTypeSuggestions = ['MRI', 'CT Scan', 'X-Ray', 'Ultrasound', 'PET Scan', 'Mammography'];
+      const diagnosisSuggestions = ['Tumor', 'Inflammation', 'Fracture', 'Infection', 'Cyst', 'Lesion', 'Stenosis'];
+      const bodyRegionSuggestions = ['Chest', 'Abdomen', 'Head', 'Pelvis', 'Spine', 'Extremities'];
+
+      function validateInputs() {
+        const newErrors = {};
+
+        // Enhanced validation with medical context
+        if (!validateNotEmpty(organ)) {
+          newErrors.organ = 'Organ specification is required for medical imaging.';
+        } else if (organ.length < 2) {
+          newErrors.organ = 'Please provide a valid organ name (minimum 2 characters).';
+        }
+
+        if (!validateNotEmpty(imageType)) {
+          newErrors.imageType = 'Image type/modality is required for proper generation.';
+        } else if (imageType.length < 2) {
+          newErrors.imageType = 'Please specify a valid imaging modality (e.g., MRI, CT, X-Ray).';
+        }
+
+        if (!validateNotEmpty(diagnosis)) {
+          newErrors.diagnosis = 'Clinical diagnosis is required for accurate image generation.';
+        } else if (diagnosis.length < 3) {
+          newErrors.diagnosis = 'Please provide a more detailed diagnosis (minimum 3 characters).';
+        }
+
+        if (!validateNotEmpty(bodyRegion)) {
+          newErrors.bodyRegion = 'Body region specification is required for anatomical context.';
+        } else if (bodyRegion.length < 3) {
+          newErrors.bodyRegion = 'Please specify a valid body region (minimum 3 characters).';
+        }
+
+        // Cross-validation for medical compatibility
+        if (organ && imageType && diagnosis) {
+          const incompatibleCombinations = [
+            { organ: 'brain', imageType: 'mammography', error: 'Mammography is not applicable for brain imaging.' },
+            { organ: 'heart', imageType: 'mammography', error: 'Mammography is not used for cardiac imaging.' },
+            { diagnosis: 'fracture', imageType: 'mri', warning: 'X-Ray is typically preferred for fracture diagnosis.' }
+          ];
+
+          const incompatible = incompatibleCombinations.find(combo =>
+            organ.toLowerCase().includes(combo.organ?.toLowerCase() || '') &&
+            imageType.toLowerCase().includes(combo.imageType?.toLowerCase() || '') &&
+            (combo.diagnosis ? diagnosis.toLowerCase().includes(combo.diagnosis.toLowerCase()) : true)
+          );
+
+          if (incompatible) {
+            if (incompatible.error) {
+              newErrors.imageType = incompatible.error;
+            }
+          }
+        }
+
+        setErrors(newErrors);
+        return Object.keys(newErrors).length === 0;
+      }
+
+      async function handleSubmit(e) {
+        e.preventDefault();
+        if (!validateInputs()) return;
+        setSubmitting(true);
+        try {
+          const { requestId, timestamp, status, imageUrl, altText, progress } = await mockCreateRequest({
+            organ,
+            imageType,
+            diagnosis,
+            bodyRegion,
+          });
+
+          // Immediately add completed request with image
+          setRequests((prev) => [
+            {
+              id: requestId,
+              params: { organ, imageType, diagnosis, bodyRegion },
+              status: status,
+              error: null,
+              imageUrl: imageUrl,
+              altText: altText,
+              progress: progress,
+              createdAt: timestamp,
+              completedAt: timestamp,
+            },
+            ...prev,
+          ]);
+
+          setOrgan('');
+          setImageType('');
+          setDiagnosis('');
+          setBodyRegion('');
+          setErrors({});
+
+          // Show success notification
+          showNotification(
+            'Image displayed successfully!',
+            'success',
+            3000,
+            `Showing ${organ} ${imageType} for ${diagnosis} diagnosis`
+          );
+        } catch (error) {
+          console.error('Request submission failed:', error);
+          showNotification(
+            'Failed to display image',
+            'error',
+            5000,
+            'Please check your connection and try again. If the problem persists, contact support.'
+          );
+        } finally {
+          setSubmitting(false);
+        }
+      }
+
+      function showNotification(message, type, duration = 4000, details = null) {
+        // Enhanced notification system with different types and details
+        const notification = document.createElement('div');
+
+        const getNotificationStyle = (type) => {
+          switch (type) {
+            case 'success':
+              return 'bg-green-500 border-green-600';
+            case 'error':
+              return 'bg-red-500 border-red-600';
+            case 'warning':
+              return 'bg-orange-500 border-orange-600';
+            case 'info':
+              return 'bg-blue-500 border-blue-600';
+            default:
+              return 'bg-gray-500 border-gray-600';
+          }
+        };
+
+        const getIcon = (type) => {
+          switch (type) {
+            case 'success': return 'fas fa-check-circle';
+            case 'error': return 'fas fa-exclamation-triangle';
+            case 'warning': return 'fas fa-exclamation-circle';
+            case 'info': return 'fas fa-info-circle';
+            default: return 'fas fa-bell';
+          }
+        };
+
+        notification.className = `fixed top-4 right-4 z-50 max-w-md rounded-lg shadow-xl text-white font-medium border-l-4 ${getNotificationStyle(type)} transform transition-all duration-300 translate-x-full`;
+
+        notification.innerHTML = `
+          <div class="p-4">
+            <div class="flex items-start space-x-3">
+              <i class="${getIcon(type)} text-lg mt-0.5"></i>
+              <div class="flex-1">
+                <p class="font-semibold">${message}</p>
+                ${details ? `<p class="text-sm opacity-90 mt-1">${details}</p>` : ''}
+              </div>
+              <button onclick="this.parentElement.parentElement.parentElement.remove()" class="text-white hover:text-gray-200 transition-colors">
+                <i class="fas fa-times"></i>
+              </button>
+            </div>
+          </div>
+        `;
+
+        document.body.appendChild(notification);
+
+        // Animate in
+        setTimeout(() => {
+          notification.classList.remove('translate-x-full');
+        }, 100);
+
+        // Auto remove
+        setTimeout(() => {
+          notification.classList.add('translate-x-full');
+          setTimeout(() => {
+            if (notification.parentNode) {
+              notification.remove();
+            }
+          }, 300);
+        }, duration);
+      }
+
+      // No polling needed - images are displayed immediately
+
+      function handleRetry(requestId) {
+        setRequests((prev) =>
+          prev.map((r) =>
+            r.id === requestId
+              ? {
+                  ...r,
+                  status: 'pending',
+                  error: null,
+                  imageUrl: null,
+                  altText: null,
+                  progress: 0,
+                  completedAt: null
+                }
+              : r
+          )
+        );
+        showNotification('Request resubmitted for processing', 'success');
+      }
+
+      function handleDelete(requestId) {
+        setRequests((prev) => prev.filter((r) => r.id !== requestId));
+        showNotification('Request deleted', 'success');
+      }
+
+      const filteredRequests = requests.filter(request => {
+        if (filter === 'all') return true;
+        return request.status === filter;
+      });
+
+      const getStatusCounts = () => {
+        return {
+          all: requests.length,
+          pending: requests.filter(r => r.status === 'pending').length,
+          processing: requests.filter(r => r.status === 'processing').length,
+          completed: requests.filter(r => r.status === 'completed').length,
+          error: requests.filter(r => r.status === 'error').length,
+        };
+      };
+
+      const statusCounts = getStatusCounts();
+
+      // System health monitoring
+      const [systemStatus, setSystemStatus] = useState('operational'); // operational, degraded, down
+      const [lastErrorTime, setLastErrorTime] = useState(null);
+
+      useEffect(() => {
+        // Monitor error rates to determine system health
+        const recentErrors = requests.filter(r =>
+          r.status === 'error' &&
+          r.failedAt &&
+          new Date() - new Date(r.failedAt) < 300000 // Last 5 minutes
+        );
+
+        if (recentErrors.length >= 3) {
+          setSystemStatus('degraded');
+          setLastErrorTime(new Date());
+        } else if (recentErrors.length >= 5) {
+          setSystemStatus('down');
+          setLastErrorTime(new Date());
+        } else if (recentErrors.length === 0) {
+          setSystemStatus('operational');
+        }
+      }, [requests]);
+
+      function SystemStatusIndicator() {
+        const getStatusColor = () => {
+          switch (systemStatus) {
+            case 'operational': return 'text-green-600 bg-green-100';
+            case 'degraded': return 'text-orange-600 bg-orange-100';
+            case 'down': return 'text-red-600 bg-red-100';
+            default: return 'text-gray-600 bg-gray-100';
+          }
+        };
+
+        const getStatusIcon = () => {
+          switch (systemStatus) {
+            case 'operational': return 'fas fa-check-circle';
+            case 'degraded': return 'fas fa-exclamation-triangle';
+            case 'down': return 'fas fa-times-circle';
+            default: return 'fas fa-question-circle';
+          }
+        };
+
+        const getStatusMessage = () => {
+          switch (systemStatus) {
+            case 'operational': return 'All systems operational';
+            case 'degraded': return 'Service experiencing issues';
+            case 'down': return 'Service temporarily unavailable';
+            default: return 'Status unknown';
+          }
+        };
+
+        return (
+          <div className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getStatusColor()}`}>
+            <i className={`${getStatusIcon()} mr-2`}></i>
+            {getStatusMessage()}
+          </div>
+        );
+      }
+
+      // Render system status in header
+      useEffect(() => {
+        const statusContainer = document.getElementById('system-status');
+        if (statusContainer) {
+          ReactDOM.render(<SystemStatusIndicator />, statusContainer);
+        }
+      }, [systemStatus]);
+
+      return (
+        <div className="space-y-8">
+          {/* System Status Alert */}
+          {systemStatus !== 'operational' && (
+            <div className={`rounded-lg p-4 border-l-4 ${
+              systemStatus === 'degraded' ? 'bg-orange-50 border-orange-500' : 'bg-red-50 border-red-500'
+            }`}>
+              <div className="flex items-center space-x-3">
+                <i className={`text-xl ${
+                  systemStatus === 'degraded' ? 'fas fa-exclamation-triangle text-orange-600' : 'fas fa-times-circle text-red-600'
+                }`}></i>
+                <div>
+                  <h3 className={`font-semibold ${
+                    systemStatus === 'degraded' ? 'text-orange-800' : 'text-red-800'
+                  }`}>
+                    {systemStatus === 'degraded' ? 'Service Degradation Detected' : 'Service Temporarily Unavailable'}
+                  </h3>
+                  <p className={`text-sm ${
+                    systemStatus === 'degraded' ? 'text-orange-700' : 'text-red-700'
+                  }`}>
+                    {systemStatus === 'degraded'
+                      ? 'We are experiencing higher than normal error rates. Requests may take longer to process.'
+                      : 'The service is currently experiencing significant issues. Please try again later.'
+                    }
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Statistics Dashboard */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {Object.entries(statusCounts).map(([status, count]) => (
+              <div
+                key={status}
+                onClick={() => setFilter(status)}
+                className={`bg-white rounded-lg shadow-md p-4 cursor-pointer transition-all duration-200 hover:shadow-lg ${
+                  filter === status ? 'ring-2 ring-medical-500 bg-medical-50' : ''
+                }`}
+              >
+                <div className="text-2xl font-bold text-gray-900">{count}</div>
+                <div className="text-sm text-gray-600 capitalize">{status}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+            {/* Request Form */}
+            <section className="xl:col-span-1 bg-white rounded-xl shadow-lg p-8 border border-gray-200">
+              <div className="flex items-center space-x-3 mb-6">
+                <i className="fas fa-plus-circle text-medical-600 text-2xl"></i>
+                <h2 className="text-2xl font-bold text-gray-900">New Request</h2>
+              </div>
+              <form onSubmit={handleSubmit} noValidate className="space-y-6">
+                <InputField
+                  label="Organ"
+                  id="organ"
+                  value={organ}
+                  onChange={(e) => setOrgan(e.target.value)}
+                  placeholder="e.g., Heart, Liver, Brain"
+                  error={errors.organ}
+                  suggestions={organSuggestions}
+                  required
+                />
+                <InputField
+                  label="Image Type"
+                  id="imageType"
+                  value={imageType}
+                  onChange={(e) => setImageType(e.target.value)}
+                  placeholder="e.g., MRI, CT Scan, X-Ray"
+                  error={errors.imageType}
+                  suggestions={imageTypeSuggestions}
+                  required
+                />
+                <InputField
+                  label="Diagnosis"
+                  id="diagnosis"
+                  value={diagnosis}
+                  onChange={(e) => setDiagnosis(e.target.value)}
+                  placeholder="e.g., Tumor, Inflammation, Fracture"
+                  error={errors.diagnosis}
+                  suggestions={diagnosisSuggestions}
+                  required
+                />
+                <InputField
+                  label="Body Region"
+                  id="bodyRegion"
+                  value={bodyRegion}
+                  onChange={(e) => setBodyRegion(e.target.value)}
+                  placeholder="e.g., Chest, Abdomen, Head"
+                  error={errors.bodyRegion}
+                  suggestions={bodyRegionSuggestions}
+                  required
+                />
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className={`w-full mt-6 px-6 py-4 rounded-xl bg-gradient-to-r from-medical-600 to-medical-700 text-white font-bold text-lg hover:from-medical-700 hover:to-medical-800 focus:outline-none focus:ring-4 focus:ring-medical-300 transition-all duration-200 shadow-lg ${
+                    submitting ? 'opacity-50 cursor-not-allowed' : 'hover:shadow-xl transform hover:-translate-y-0.5'
+                  }`}
+                  aria-live="polite"
+                >
+                  {submitting ? (
+                    <span className="inline-flex items-center justify-center">
+                      <i className="fas fa-spinner fa-spin mr-3" aria-hidden="true"></i>
+                      Loading Image...
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center justify-center">
+                      <i className="fas fa-image mr-3" aria-hidden="true"></i>
+                      Show Medical Image
+                    </span>
+                  )}
+                </button>
+              </form>
+
+              {/* Error Recovery Help */}
+              {statusCounts.error > 0 && (
+                <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <h3 className="font-semibold text-blue-900 mb-2 flex items-center">
+                    <i className="fas fa-question-circle mr-2"></i>
+                    Having Issues?
+                  </h3>
+                  <div className="text-sm text-blue-800 space-y-2">
+                    <p>• Check that your parameters are medically compatible</p>
+                    <p>• Try again during off-peak hours (early morning/late evening)</p>
+                    <p>• Simplify your request if it's complex</p>
+                    <p>• Contact support if errors persist</p>
+                  </div>
+                </div>
+              )}
+            </section>
+
+            {/* Request Status */}
+            <section className="xl:col-span-2">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center space-x-3">
+                  <i className="fas fa-list-alt text-medical-600 text-2xl"></i>
+                  <h2 className="text-2xl font-bold text-gray-900">
+                    Request History
+                    {filter !== 'all' && (
+                      <span className="text-lg font-normal text-gray-600 ml-2">
+                        ({filter})
+                      </span>
+                    )}
+                  </h2>
+                </div>
+                {filter !== 'all' && (
+                  <button
+                    onClick={() => setFilter('all')}
+                    className="text-medical-600 hover:text-medical-700 font-medium"
+                  >
+                    Show All
+                  </button>
+                )}
+              </div>
+
+              {filteredRequests.length === 0 && (
+                <div className="bg-white rounded-xl shadow-lg p-12 text-center border border-gray-200">
+                  <i className="fas fa-clipboard-list text-gray-300 text-6xl mb-4"></i>
+                  <p className="text-gray-600 text-lg">
+                    {filter === 'all'
+                      ? 'No requests yet. Submit your first image generation request!'
+                      : `No ${filter} requests found.`
+                    }
+                  </p>
+                </div>
+              )}
+
+              <div className="max-h-[80vh] overflow-y-auto space-y-6">
+                {filteredRequests.map((request) => (
+                  <RequestCard
+                    key={request.id}
+                    request={request}
+                    onRetry={handleRetry}
+                    onDelete={handleDelete}
+                  />
+                ))}
+              </div>
+            </section>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
